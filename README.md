@@ -1,22 +1,66 @@
 # EL-Rouji MCP Adapter
 
-Local Model Context Protocol (MCP) server for connecting MCP-compatible clients to the existing EL-Rouji application API.
+A local Model Context Protocol (MCP) server that connects MCP-compatible clients to the existing EL-Rouji application API. It is an adapter, not a replacement backend.
 
-**Initial status:** repository bootstrapping. The README is the seed commit; executable server code is added in the implementation pull request.
+## Implemented tools
 
-## Scope and trust boundary
+| Tool | Purpose | Default |
+|---|---|---|
+| `el_rouji_health` | Read the configured application's `/api/health` endpoint | Enabled |
+| `el_rouji_chat` | Send one bounded prompt to `/api/chat` | Disabled |
+| `el_rouji_research` | Send a bounded search query to `/api/research` | Disabled |
+| `el_rouji_analyze_text` | Submit supplied text for TXT, MD, CSV, or JSON analysis | Disabled |
 
-This repository is an adapter, not a replacement for the EL-Rouji frontend/backend. It must call only the configured EL-Rouji base URL, must not accept arbitrary upstream URLs from tool arguments, and must not persist conversation data by default.
+The adapter does not read arbitrary local files, accept user-provided upstream URLs, store conversations, implement scheduled jobs, connect commerce/payment flows, or execute arbitrary tools. Direct URL scraping is deliberately not exposed through the MCP research tool.
 
-The current EL-Rouji backend exposes public chat and research routes. Because generation can consume provider resources, generation tools must be disabled by default and require an explicit local opt-in. The health tool is read-only. Enable generation only after reviewing endpoint usage and cost/rate-limit controls.
+## Requirements and local run
 
-## Target tools
+Python 3.11 or later is required. Install the package in a virtual environment:
 
-- `el_rouji_health` — read the configured application's health endpoint.
-- `el_rouji_chat` — forward one prompt to the existing chat endpoint when generation is explicitly enabled.
-- `el_rouji_research` — forward a bounded query to the existing research endpoint when enabled; direct URL scraping is not exposed through this MCP tool.
-- `el_rouji_analyze_text` — forward explicitly supplied text in a supported file format when enabled. The adapter does not read arbitrary local files.
+```sh
+python -m venv .venv
+# Linux/macOS:
+. .venv/bin/activate
+python -m pip install -e .
+python -m unittest discover -s tests -v
+el-rouji-mcp
+```
 
-The adapter does not implement scheduled jobs, commerce, dataset ingestion, account synchronization, or tool execution outside the documented EL-Rouji API.
+The server uses MCP over stdio by default, so an MCP host starts it as a local subprocess. Do not print diagnostics to stdout; stdout is used by the protocol.
 
-See [EL-Rouji core](https://github.com/looloofy69-sketch/EL-Rouji) for the source application and [its integration notes](https://github.com/looloofy69-sketch/EL-Rouji/blob/main/docs/INTEGRATIONS.md) for current service boundaries.
+## Configuration
+
+- `EL_ROUJI_BASE_URL`: origin of the existing EL-Rouji deployment. Defaults to `https://el-rouji-70120b.v2.appdeploy.ai`. Only an HTTP(S) origin is allowed; remote services must use HTTPS.
+- `EL_ROUJI_ENABLE_GENERATION`: defaults to disabled. Set to `true` only when you knowingly accept that tool calls invoke the hosted application's AI/search endpoints and their usage costs. This is a local opt-in, not a substitute for server-side authentication, rate limiting, or quotas.
+- `LOG_LEVEL`: optional logging level; defaults to `WARNING`. Logs go to stderr.
+
+Example MCP host configuration (replace the path with the absolute path on your own machine):
+
+```json
+{
+  "mcpServers": {
+    "el-rouji": {
+      "command": "/absolute/path/to/repository/.venv/bin/el-rouji-mcp",
+      "env": {
+        "EL_ROUJI_BASE_URL": "https://el-rouji-70120b.v2.appdeploy.ai",
+        "EL_ROUJI_ENABLE_GENERATION": "false"
+      }
+    }
+  }
+}
+```
+
+## Security and reliability
+
+- Generation tools are disabled unless explicitly enabled in the local MCP process environment.
+- HTTP redirects are not followed; API routes are fixed constants rather than tool-supplied URLs.
+- Base URLs containing credentials, paths, query strings, or fragments are rejected. Plain HTTP is allowed only for localhost development.
+- Prompt, document, and response sizes are bounded.
+- The adapter does not claim to add server-side rate limiting, account identity, authorization, or quotas to the existing API. Review those controls before broad or shared deployment.
+- Do not configure this server for untrusted MCP clients. Do not embed secrets in prompts, tool arguments, repository files, or host configuration committed to source control.
+
+## Source of truth
+
+The application implementation and API contracts live in [EL-Rouji core](https://github.com/looloofy69-sketch/EL-Rouji). Current platform and integration limits are documented in the [core integration notes](https://github.com/looloofy69-sketch/EL-Rouji/blob/main/docs/INTEGRATIONS.md).
+
+The automated tests exercise configuration validation and imports; they do not prove live deployment connectivity or authorization. Live health/chat/research verification must be run separately.
