@@ -13,7 +13,6 @@ from el_rouji_mcp.config import (
 
 class ConfigTests(unittest.TestCase):
     def test_default_base_url(self) -> None:
-        self.assertEqual(normalize_base_url(""), DEFAULT_BASE_URL) if False else None
         self.assertEqual(normalize_base_url(None), DEFAULT_BASE_URL)
 
     def test_normalize_base_url(self) -> None:
