@@ -1,0 +1,32 @@
+name: Live read-only health smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "EL-Rouji application origin (HTTPS required for remote services)"
+        required: false
+        default: "https://el-rouji-70120b.v2.appdeploy.ai"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  health-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EL_ROUJI_BASE_URL: ${{ inputs.base_url }}
+      EL_ROUJI_ENABLE_GENERATION: "false"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install MCP adapter
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Call the read-only health handler
+        run: python scripts/live_health_smoke.py
