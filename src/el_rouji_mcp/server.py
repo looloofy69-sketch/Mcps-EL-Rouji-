@@ -42,20 +42,30 @@ async def _request_json(method: Literal["GET", "POST"], path: str, payload: dict
     if not path.startswith("/api/") or "://" in path or ".." in path:
         raise ValueError("Invalid internal API path.")
     timeout = httpx.Timeout(45.0, connect=5.0)
+    chunks: list[bytes] = []
+    size = 0
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-        response = await client.request(
+        async with client.stream(
             method,
             f"{BASE_URL}{path}",
             json=payload,
             headers={"Accept": "application/json"},
-        )
-    if len(response.content) > MAX_RESPONSE_BYTES:
-        raise RuntimeError("EL-Rouji returned a response larger than the adapter limit.")
-    if response.status_code < 200 or response.status_code >= 300:
-        logger.warning("EL-Rouji API request failed: path=%s status=%s", path, response.status_code)
-        raise RuntimeError(f"EL-Rouji API returned HTTP {response.status_code}.")
+        ) as response:
+            # Stream and count decoded bytes before retaining the full body. A
+            # post-read len(response.content) check would still buffer an
+            # oversized response in memory before rejecting it.
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_RESPONSE_BYTES:
+                    raise RuntimeError("EL-Rouji returned a response larger than the adapter limit.")
+                chunks.append(chunk)
+            status_code = response.status_code
+
+    if status_code < 200 or status_code >= 300:
+        logger.warning("EL-Rouji API request failed: path=%s status=%s", path, status_code)
+        raise RuntimeError(f"EL-Rouji API returned HTTP {status_code}.")
     try:
-        data = response.json()
+        data = json.loads(b"".join(chunks))
     except ValueError as exc:
         raise RuntimeError("EL-Rouji returned a non-JSON response.") from exc
     if not isinstance(data, dict):
