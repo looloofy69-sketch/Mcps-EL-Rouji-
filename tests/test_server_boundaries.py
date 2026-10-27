@@ -7,18 +7,21 @@ from el_rouji_mcp import server
 
 
 class FakeResponse:
-    def __init__(self, *, status_code=200, content=b'{"ok": true}', parsed=None, json_error=None):
+    def __init__(self, *, status_code=200, content=b'{"ok": true}'):
         self.status_code = status_code
         self.content = content
-        self._parsed = parsed
-        self._json_error = json_error
+        self.chunks_yielded = 0
 
-    def json(self):
-        if self._json_error:
-            raise self._json_error
-        if self._parsed is not None:
-            return self._parsed
-        return json.loads(self.content.decode("utf-8"))
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def aiter_bytes(self, chunk_size=65_536):
+        for start in range(0, len(self.content), chunk_size):
+            self.chunks_yielded += 1
+            yield self.content[start:start + chunk_size]
 
 
 class FakeAsyncClient:
@@ -33,7 +36,7 @@ class FakeAsyncClient:
     async def __aexit__(self, exc_type, exc, traceback):
         return False
 
-    async def request(self, method, url, *, json=None, headers=None):
+    def stream(self, method, url, *, json=None, headers=None):
         self.request_args = {
             "method": method,
             "url": url,
@@ -71,19 +74,18 @@ class RequestJsonTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "HTTP 503"):
             self.call(response)
 
-    def test_response_size_is_bounded_before_json_parsing(self):
-        response = FakeResponse(content=b"x" * (server.MAX_RESPONSE_BYTES + 1))
-        response.json = lambda: self.fail("JSON parser must not run for oversized payload")
+    def test_oversized_response_stops_streaming_before_full_body_is_buffered(self):
+        response = FakeResponse(content=b"x" * (server.MAX_RESPONSE_BYTES * 2))
         with self.assertRaisesRegex(RuntimeError, "larger than the adapter limit"):
             self.call(response)
+        total_chunks = (len(response.content) + 65_535) // 65_536
+        self.assertLess(response.chunks_yielded, total_chunks)
 
     def test_invalid_json_and_non_object_json_are_rejected(self):
-        response = FakeResponse(json_error=ValueError("bad json"), content=b"not-json")
         with self.assertRaisesRegex(RuntimeError, "non-JSON response"):
-            self.call(response)
-        response = FakeResponse(parsed=[1, 2, 3])
+            self.call(FakeResponse(content=b"not-json"))
         with self.assertRaisesRegex(RuntimeError, "unexpected response shape"):
-            self.call(response)
+            self.call(FakeResponse(content=b"[1,2,3]"))
 
 
 class ToolBoundaryTests(unittest.IsolatedAsyncioTestCase):
